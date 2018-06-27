@@ -4,14 +4,14 @@
 ^!#7::
 ;press CTRL+C
 Send , ^c
-clipfile = d:\htdocs\sqlparser\clip.txt
-outfile = d:\htdocs\sqlparser\out.txt
+clipfile = i:\michel\shit2pdo\clip.txt
+outfile = i:\michel\shit2pdo\out.txt
 
 FileDelete,%clipfile%
 FileAppend,%clipboard%,%clipfile%
 
 ;call the parser -> this will generate the "out.txt" file
-UrlDownloadToFile, http://localhost/shit2pdo/go.php, d:\htdocs\sqlparser\tmp_download.txt
+UrlDownloadToFile, http://vm-dev/michel/shit2pdo/go.php, i:\michel\shit2pdo\tmp_download.txt
 
 ;read the out file to %r% variable:
 FileRead, r, %outfile%
@@ -23,6 +23,6 @@ Clipboard := r
 Send , ^v
 
 ;some sound
-;SoundPlay *64
+SoundPlay *64
 
 return

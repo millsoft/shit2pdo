@@ -61,18 +61,35 @@ class mysql2pdo
 
         $visitor = new class extends NodeVisitorAbstract
         {
+            private $lastLine = 0;
+
             public function leaveNode(Node $node)
             {
-                //return NodeTraverser::REMOVE_NODE;
-                $fi = "nodes.txt";
+
+                //Last edit!
+                //print_r($node);
+                //die();
+                if(isset($node->value->startLine)){
+                    die("YEEE");
+                }
 
                 if ($node instanceof Node\Scalar\LNumber) {
                     return new Node\Scalar\String_((string)$node->value);
                 }
 
+                if ($node instanceof Node\Expr\Variable) {
+                    //return new Node\Scalar\String_((string)$node->value);
+                    //die($node->name);
+                    $this->vars[] = $node->name;
+                }
+
 
                 if ($node instanceof Node\Expr\ArrayDimFetch) {
                     $this->vars[][$node->var->name] = $node->dim->value;
+                }
+
+                if ($node instanceof Node\Expr\Assign) {
+                    $this->vars[] = '$' . $node->var->name . ' = ';
                 }
 
                 if ($node instanceof Node\Expr\FuncCall) {
@@ -117,19 +134,48 @@ class mysql2pdo
         foreach ($visitor->vars as $v) {
 
             $hasSpace = false;
+            $hasTicks = false;
+            $hasComma = false;
 
             if (!is_array($v)) {
                 $hasSpace = strpos($v, ' ') !== false;
+                $hasTicks = strpos($v, '`') !== false;
+                $hasComma = strpos($v, ',') !== false;
+                $hasAt = strpos($v, '@') !== false;
+
             }
 
             if (!is_array($v) && $hasSpace) {
                 $newCommand[] = $v;
             }
 
+            /*
             if (!is_array($v) && !$hasSpace) {
                 $lastVar = $v;
                 $newCommand[] = ':' . $v;
                 $params[$v] = "?";
+            }
+            */
+
+            if (!is_array($v) && !$hasSpace && !$hasAt && !$hasTicks && !in_array($v, [
+                "sql"
+                ])) {
+                $lastVar = $v;
+
+                $ignore = ["GET", "_GET", "_POST", "POST"];
+                if(!in_array($v, $ignore)){
+
+
+                if($v == 'tableSuffix'){
+                    $newCommand[] =  '{$' . $v . '}';
+                }else{
+                    $newCommand[] = ':' . $v;
+                }
+
+                $params[$v] = "UNKNOWN";
+
+                }
+
             }
 
             if (is_array($v)) {
@@ -192,13 +238,32 @@ class mysql2pdo
         }
 
         if ($fun == 'from') {
-            $final_output[] = $fn . '($sql, "@???" , [' . "\n" . $params . "\n" . '])';
+
+            //find query type: (raw, simple, etc..)
+            $re = '/[\"\'](?<type>@.+?)[\"\']/m';
+            preg_match_all($re, $code, $matches, PREG_SET_ORDER, 0);
+
+            $query_type = "???";
+
+            if(!empty($matches)){
+                $query_type = isset($matches[0]['type']) ? $matches[0]['type'] : '???';
+            }
+
+            $final_output[] = $fn . '($sql, "' . $query_type . '" , [' . "\n" . $params . "\n" . '])';
         }
 
 
         $outFile = __DIR__ . "/out.txt";
         file_put_contents($outFile, implode(";\n", $final_output));
 
+
+        print_r($code);
+        echo "\n\n";
+
+        print_r($newCommand);
+        print_r($final_output);
+
+        print_r($modifiedStmts);
 
         /*
         print_r($params);
