@@ -13,6 +13,9 @@ use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 
+                error_reporting(E_ALL);
+                ini_set('display_errors', 1);
+
 
 class mysql2pdo
 {
@@ -44,11 +47,11 @@ class mysql2pdo
 
     public function parseFile($file)
     {
-        $code = file_get_contents($file);
+        $raw_code = file_get_contents($file);
 
-        $code_statements = explode("\n", $code);
+        $code_statements = explode("\n", $raw_code);
 
-        $code = '<?php' . "\n$code\n" . '?>';
+        $code = '<?php' . "\n$raw_code\n" . '?>';
 
         $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5);
         try {
@@ -61,60 +64,83 @@ class mysql2pdo
 
         $visitor = new class extends NodeVisitorAbstract
         {
-            private $lastLine = 0;
+            private $lastLine = null;
+
+            //if there is fromDatabase or toDatabase, stop parsing
+            private $hasDatabaseFn = false;
 
             public function leaveNode(Node $node)
             {
 
-                //Last edit!
-                //print_r($node);
-                //die();
-                if(isset($node->value->startLine)){
-                    die("YEEE");
-                }
+                $this->lastLine = $node->getStartLine();
 
                 if ($node instanceof Node\Scalar\LNumber) {
                     return new Node\Scalar\String_((string)$node->value);
                 }
-
-                if ($node instanceof Node\Expr\Variable) {
-                    //return new Node\Scalar\String_((string)$node->value);
-                    //die($node->name);
-                    $this->vars[] = $node->name;
-                }
-
-
-                if ($node instanceof Node\Expr\ArrayDimFetch) {
-                    $this->vars[][$node->var->name] = $node->dim->value;
-                }
-
-                if ($node instanceof Node\Expr\Assign) {
-                    $this->vars[] = '$' . $node->var->name . ' = ';
-                }
+                
 
                 if ($node instanceof Node\Expr\FuncCall) {
-                    //$this->vars[] = $node->value;
-
-                    $args = [];
-                    foreach ($node->args as $arg) {
-                        //print_r($arg);
-                        //die("DIE:" . $arg->value->value);
-                        if (isset($arg->value->value)) {
-                            $args[] = $arg->value->value;
-                        }
+                    if(in_array($node->name->parts[0], ['toDatabase', 'fromDatabase'])){
+                        $this->hasDatabaseFn = true;
                     }
 
-                    $this->vars[] = [
-                        "fn" => [
-                            "name" => $node->name->parts[0],
-                            "args" => $args
-                        ]
-                    ];
                 }
 
-                if ($node instanceof Node\Scalar\String_) {
-                    $this->vars[] = $node->value;
-                }
+                if(!$this->hasDatabaseFn){
+
+
+                    if ($node instanceof Node\Expr\Variable) {
+                        //return new Node\Scalar\String_((string)$node->value);
+                        //die($node->name);
+                        $this->vars[] = $node->name;
+                    }
+
+
+                    if ($node instanceof Node\Expr\ArrayDimFetch) {
+                        $this->vars[][$node->var->name] = $node->dim->value;
+                    }
+
+                    if ($node instanceof Node\Expr\Assign) {
+                        $this->vars[] = '$' . $node->var->name . ' = ';
+                    }
+
+                    if ($node instanceof Node\Expr\FuncCall) {
+                        //$this->vars[] = $node->value;
+
+                        $args = [];
+                        foreach ($node->args as $arg) {
+                            //print_r($arg);
+                            //die("DIE:" . $arg->value->value);
+                            
+                            if (isset($arg->value->value)) {
+                                $val = $arg->value->value;
+                                
+                                if($arg->value instanceof Node\Scalar\String_){
+                                    $val = "'" . $val . "'";
+                                }
+
+
+                                $args[] = $val;
+
+                            }
+                        }
+
+                        $this->vars[] = [
+                            "fn" => [
+                                "name" => $node->name->parts[0],
+                                "args" => $args
+                            ]
+                        ];
+                    }
+
+                    if ($node instanceof Node\Scalar\String_) {
+                        $this->vars[] = $node->value;
+                    }
+
+
+            }else{
+                return null;
+            }
 
             }
         };
@@ -162,7 +188,7 @@ class mysql2pdo
                 ])) {
                 $lastVar = $v;
 
-                $ignore = ["GET", "_GET", "_POST", "POST"];
+                $ignore = ["GET", "_GET", "_POST", "POST", 'sql', '$sql'];
                 if(!in_array($v, $ignore)){
 
 
@@ -195,6 +221,9 @@ class mysql2pdo
                         //die($v['fn']['name']  "===" . $pos);
                         continue;
                     }
+
+                    print_r($v);
+
                     $fnCall = $v['fn']['name'] . '(';
                     $fnCall .= implode(',', $v['fn']['args']);
                     $fnCall .= ')';
@@ -208,13 +237,18 @@ class mysql2pdo
 
         }
 
+        $lastEntry = $newCommand[count($newCommand)-1];
+        if(stripos($lastEntry, '$sql') !== false){
+                unset($newCommand[count($newCommand)-1]);
+        }
+
         //Now build the query:
         $sql = implode('', $newCommand);
 
         //build params:
         $_par = [];
         foreach ($params as $k => $v) {
-            $_par[] = "'" . $k . "' => " . $v;
+            $_par[] = "\t\t\t'" . $k . "' => " . $v;
         }
 
         $params = implode(",\n", $_par);
@@ -231,6 +265,11 @@ class mysql2pdo
         }
 
         $final_output = [];
+
+        $final_output[] = '/*' . "\n";
+        $final_output[] = $raw_code;
+        $final_output[] = '*/' . "\n";
+
         $final_output[] = '$sql = "' . $sql . '"';
 
         if ($fun == 'to') {
@@ -254,16 +293,16 @@ class mysql2pdo
 
 
         $outFile = __DIR__ . "/out.txt";
-        file_put_contents($outFile, implode(";\n", $final_output));
+        file_put_contents($outFile, implode(";\n", $final_output ) . ";\n\n");
 
 
-        print_r($code);
-        echo "\n\n";
+        //print_r($code);
+        //echo "\n\n";
 
-        print_r($newCommand);
-        print_r($final_output);
+        //print_r($newCommand);
+        //print_r($final_output);
 
-        print_r($modifiedStmts);
+        //print_r($modifiedStmts);
 
         /*
         print_r($params);
